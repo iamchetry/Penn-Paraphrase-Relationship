@@ -1,3 +1,1 @@
-categorical_columns = ['0', '1', '2', '14', 'TargetWords', 'UnalignedSource', 'Adjacent', 'ContainsX',
-                       'TargetTerminalsButNoSource', 'Monotonic', 'Identity', 'Lexical', 'SourceTerminalsButNoTarget',
-                       'Abstract', 'UnalignedTarget']
+categorical_columns = ['0', 'source', 'target', '14', 'ContainsX', 'label']
