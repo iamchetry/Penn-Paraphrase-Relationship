@@ -1,108 +1,20 @@
+from phrase_relations.preprocess import *
 from phrase_relations.modelling import *
 
 import warnings
-from re import *
-from pandas import *
-from collections import Counter
 from gensim.models import Word2Vec
 from gensim.models.doc2vec import Doc2Vec, TaggedDocument
-from imblearn.over_sampling import SMOTE
-
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import scale
 
 warnings.filterwarnings('ignore')
 
 
-def load_data(file_, label_col=None):
-    data_ = read_csv('data/{}'.format(file_), header=None).dropna(axis=1)
-    data_.columns = range(len(data_.columns))
-    return data_.rename(columns={len(data_.columns)-1: label_col, 1: 'source', 2: 'target'})
-
-
-def list_to_dict(list_):
-    iter_ = iter(list_)
-    return dict(zip(iter_, iter_))
-
-
-def replace_missing_values(data_):
-    continuous_cols = list(set(data_.columns).difference(set(categorical_columns)))
-    data_[continuous_cols] = data_[continuous_cols].apply(to_numeric, errors='coerce')
-    data_[continuous_cols] = data_[continuous_cols].fillna(data_[continuous_cols].mean())
-
-    return data_
-
-
-def remove_cols(data_):
-    return [col_ for col_ in data_.columns if len(data_[col_].unique()) > 1]
-
-
-def split_columns(data_):
-    len_ = len(data_.columns)
-    for col_ in range(3, len_-2):
-        data_ = concat([data_.drop([col_], axis=1), data_[col_].apply(Series)], axis=1)
-
-    return data_
-
-
-def fix_duplicate_cols(data_):
-    col_dict = Counter(data_.columns)
-    duplicate_cols = [key_ for key_ in col_dict if col_dict[key_] > 1]
-    for col_ in duplicate_cols:
-        data_ = concat([data_.drop([col_], axis=1), DataFrame(data_[col_].values, columns=[
-            str(col_)+'_'+str(k) for k in range(len(data_[col_].columns))])], axis=1)
-
-    return data_
-
-
-def extract_values(data_):
-    data_[range(3, len(data_.columns)-2)] = data_[range(3, len(data_.columns)-2)].astype('str').\
-        applymap(lambda x: [k for k in split('=| ', x) if k != ''])
-    data_[range(3, len(data_.columns)-2)] = data_[range(3, len(data_.columns)-2)].\
-        applymap(lambda list_: list_to_dict(list_))
-    data_ = split_columns(data_)
-    data_.columns = [sub('[,)(]', '', str(col_)) for col_ in data_.columns]
-
-    return data_
-
-
-def clean_text(text_):
-    return sub('[^a-z0-9A-Z]+', ' ', text_).lower()
-
-
-def tokenize_phrase(str_):
-    return [word_ for word_ in str_.split() if word_ != '']
-
-
-def get_vec_of_word(word_, model_):
-    return model_.wv[word_]
-
-
-def get_vectors(token_, phrase_, word_model=None, doc_model=None):
-    list_of_vecs = map(get_vec_of_word, token_, len(token_)*[word_model])
-    list_of_vecs.append(list(doc_model.infer_vector(phrase_.split())))
-
-    return list_of_vecs
-
-
-def calculate_mean_of_vecs(list_of_lists, dim_=None):
-    sum_vec = np.zeros(dim_)
-    for _, val_ in enumerate(list_of_lists):
-        sum_vec = sum_vec + np.array(val_)
-
-    return list(sum_vec/len(list_of_lists))
-
-
-def take_common_cols(data_1, data_2):
-    return list(set(data_1.columns).intersection(set(data_2.columns)))
-
-
-def get_vector_similarity(vec_1, vec_2):
-    return cosine_similarity([map(float, vec_1)], [map(float, vec_2)])[0][0]
-
-
 def calculate_similarity(data_, dim_=None):
+    '''
+    :param data_: data-frame
+    :param dim_: embedding vector dimension
+    :return: data-frame
+    '''
+
     data_[['source', 'target']] = data_[['source', 'target']].applymap(lambda str_: clean_text(str_))
     data_[['source_token', 'target_token']] = data_[['source', 'target']].applymap(lambda str_: tokenize_phrase(str_))
     word2vec_model = Word2Vec(list(data_['source_token'].values)+list(data_['target_token'].values), min_count=1,
@@ -123,44 +35,18 @@ def calculate_similarity(data_, dim_=None):
     return data_
 
 
-def oversample_data(data_, label_col=None):
-    data_ = data_.drop(columns=['source', 'target'])
-    label_dict = dict(Counter(data_[label_col]))
-    max_label = [key_ for key_ in label_dict if label_dict[key_] == max(label_dict.values())][0]
-    label_dict.pop(max_label)
-    smt = SMOTE()
-    sampled_data = data_[data_[label_col] == max_label]
-    train_cols = list(data_.columns.difference({label_col}))
-    for label_ in label_dict:
-        _data = concat([data_[data_[label_col] == max_label], data_[data_[label_col] == label_]], ignore_index=True)
-        data_x, data_y = smt.fit_sample(_data[train_cols], _data[label_col])
-        _data = DataFrame(concat([DataFrame(data_x), Series(data_y)], axis=1).values, columns=train_cols+[label_col])
-        sampled_data = sampled_data.append(_data[_data[label_col] != max_label], ignore_index=True)
-
-    return sampled_data
-
-
-def apply_pca(data_, percent_variance_to_capture=None, num_comps=None, label_col=None):
-    cols_ = list(set([col_ for col_ in data_.columns if not ('0' in col_ or '14' in col_)]).
-                 difference(set(categorical_columns)))
-    if not num_comps:
-        pca = PCA(n_components=len(cols_))
-        scaled_data = scale(data_[cols_].values)
-        pca.fit(scaled_data)
-        cum_var = np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4) * 100)
-        num_comps = len(cum_var) - len([k for k in cum_var if k > percent_variance_to_capture])
-
-    pca = PCA(n_components=num_comps)
-    scaled_data = scale(data_[cols_].values)
-    pca.fit(scaled_data)
-    return concat(
-        [DataFrame(pca.fit_transform(scaled_data), columns=['PC' + '_' + str(k) for k in range(num_comps)]),
-         data_[[col_ for col_ in data_.columns if ('0' in col_ or '14' in col_)] + ['ContainsX', label_col]]],
-        axis=1), num_comps
-
-
 def data_preprocessing(filename=None, dimension=None, columns_=None, percent_variance_to_capture=None, num_comps=None,
                        label_col=None):
+    '''
+    :param filename: csv file to import
+    :param dimension: embedding vector dimension
+    :param columns_: columns specified for test data
+    :param percent_variance_to_capture: percent of total variance to capture
+    :param num_comps: number of principal components specified for test data
+    :param label_col: class label column name
+    :return: (data-frame, list of columns, integer) or data-frame
+    '''
+
     data_ = load_data(filename, label_col=label_col)
     data_ = extract_values(data_)
     data_ = fix_duplicate_cols(data_)
@@ -181,6 +67,15 @@ def data_preprocessing(filename=None, dimension=None, columns_=None, percent_var
 
 def obtain_train_test(train_filename=None, test_filename=None, dimension=None, percent_variance_to_capture=None,
                       label_col=None):
+    '''
+    :param train_filename: training csv file
+    :param test_filename: testing csv file
+    :param dimension: embedding vector dimension
+    :param percent_variance_to_capture: percent of total variance to capture
+    :param label_col: class label column name
+    :return: two data-frames
+    '''
+
     data_train, columns_, components_ = data_preprocessing(filename=train_filename, dimension=dimension,
                                                            percent_variance_to_capture=percent_variance_to_capture,
                                                            label_col=label_col)
@@ -193,6 +88,13 @@ def obtain_train_test(train_filename=None, test_filename=None, dimension=None, p
 
 
 def apply_model(train_data, model_name=None, label_col=None):
+    '''
+    :param train_data: training data-frame
+    :param model_name: classification model name for dumping and loading
+    :param label_col: class label column name
+    :return: list of columns
+    '''
+
     columns_ = [col_ for col_ in train_data.columns.difference({label_col})]
     param_learned = grid_search(train_data[columns_], train_data[label_col])
     dump_best_model(train_data[columns_], train_data[label_col], param_learned, model_name=model_name)
@@ -200,19 +102,21 @@ def apply_model(train_data, model_name=None, label_col=None):
     return columns_
 
 
-def prediction(test_data, model_name=None, columns_=None, label_col=None):
-    model = load_from_pickle(model_name)
-    return concat([test_data, DataFrame(model.predict(test_data[columns_]), columns=[label_col+'_predicted'])], axis=1)
-
-
 def phrase_relation_main(train_filename=None, test_filename=None, embedding_dimension=None, model_name=None,
                          percent_variance_to_capture=None, class_column=None):
+    '''
+    :param train_filename: training csv file
+    :param test_filename: testing csv file
+    :param embedding_dimension: embedding vector dimension
+    :param model_name: classification model name for dumping and loading
+    :param percent_variance_to_capture: percent of total variance to capture
+    :param class_column: class label column name
+    :return: dictionary containing score values
+    '''
+
     data_train, data_test = obtain_train_test(train_filename=train_filename, test_filename=test_filename,
                                               dimension=embedding_dimension, label_col=class_column,
                                               percent_variance_to_capture=percent_variance_to_capture)
     columns_ = apply_model(data_train, model_name=model_name, label_col=class_column)
     test_predicted = prediction(data_test, model_name=model_name, columns_=columns_, label_col=class_column)
     return obtain_scores(actual_=test_predicted[class_column], predicted_=test_predicted[class_column+'_predicted'])
-
-
-
