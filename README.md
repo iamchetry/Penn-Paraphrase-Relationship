@@ -23,3 +23,9 @@ Determine the Relationship between two partial phrases
   * **Dimensionality Reduction** technique is applied on continuous variables.
   * **Random Forest** classifier with **Grid Search** parameter tuning method is applied.
   
+ * Steps to execute:
+   * $ **git clone https://github.com/iamchetry/Penn-Paraphrase-Relationship.git**
+   * $ **cd Penn-Paraphrase-Relationship**
+   * $ **git pull origin master (Optional)**
+   * $ **chmod +x run_script.sh**
+   * $ **./run_script.sh**
