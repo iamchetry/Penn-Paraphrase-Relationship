@@ -1,5 +1,6 @@
-from phrase_relations.constants import *
+from phrase_relations.modelling import *
 
+import warnings
 from re import *
 from pandas import *
 from collections import Counter
@@ -11,11 +12,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import scale
 
+warnings.filterwarnings('ignore')
 
-def load_data(file_):
+
+def load_data(file_, label_col=None):
     data_ = read_csv('data/{}'.format(file_), header=None).dropna(axis=1)
     data_.columns = range(len(data_.columns))
-    return data_.rename(columns={len(data_.columns)-1: 'label', 1: 'source', 2: 'target'})
+    return data_.rename(columns={len(data_.columns)-1: label_col, 1: 'source', 2: 'target'})
 
 
 def list_to_dict(list_):
@@ -32,7 +35,7 @@ def replace_missing_values(data_):
 
 
 def remove_cols(data_):
-    return data_[[col_ for col_ in data_.columns if len(data_[col_].unique()) > 1]]
+    return [col_ for col_ in data_.columns if len(data_[col_].unique()) > 1]
 
 
 def split_columns(data_):
@@ -91,6 +94,10 @@ def calculate_mean_of_vecs(list_of_lists, dim_=None):
     return list(sum_vec/len(list_of_lists))
 
 
+def take_common_cols(data_1, data_2):
+    return list(set(data_1.columns).intersection(set(data_2.columns)))
+
+
 def get_vector_similarity(vec_1, vec_2):
     return cosine_similarity([map(float, vec_1)], [map(float, vec_2)])[0][0]
 
@@ -133,28 +140,79 @@ def oversample_data(data_, label_col=None):
     return sampled_data
 
 
-def apply_pca(data_, percent_variance_to_capture=None):
-    cols_ = list(set(data_.columns).difference(set(categorical_columns)))
-    pca = PCA(n_components=len(cols_))
+def apply_pca(data_, percent_variance_to_capture=None, num_comps=None, label_col=None):
+    cols_ = list(set([col_ for col_ in data_.columns if not ('0' in col_ or '14' in col_)]).
+                 difference(set(categorical_columns)))
+    if not num_comps:
+        pca = PCA(n_components=len(cols_))
+        scaled_data = scale(data_[cols_].values)
+        pca.fit(scaled_data)
+        cum_var = np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4) * 100)
+        num_comps = len(cum_var) - len([k for k in cum_var if k > percent_variance_to_capture])
+
+    pca = PCA(n_components=num_comps)
     scaled_data = scale(data_[cols_].values)
     pca.fit(scaled_data)
-    cum_var = np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4)*100)
-    num_comps = len(cum_var)-len([k for k in cum_var if k > percent_variance_to_capture])
-    pca = PCA(n_components=num_comps)
-    pca.fit(scaled_data)
-    return concat([DataFrame(pca.fit_transform(scaled_data), columns=['PC'+'_'+str(k) for k in range(num_comps)]),
-                   data_[categorical_columns]], axis=1)
+    return concat(
+        [DataFrame(pca.fit_transform(scaled_data), columns=['PC' + '_' + str(k) for k in range(num_comps)]),
+         data_[[col_ for col_ in data_.columns if ('0' in col_ or '14' in col_)] + ['ContainsX', label_col]]],
+        axis=1), num_comps
 
 
-def data_preprocessing(filename=None, dimension=None):
-    data_ = load_data(filename)
+def data_preprocessing(filename=None, dimension=None, columns_=None, percent_variance_to_capture=None, num_comps=None,
+                       label_col=None):
+    data_ = load_data(filename, label_col=label_col)
     data_ = extract_values(data_)
     data_ = fix_duplicate_cols(data_)
-    data_ = remove_cols(data_)
-    data_ = replace_missing_values(data_)
+    if not columns_:
+        columns_ = remove_cols(data_)
+    data_ = replace_missing_values(data_[columns_])
     data_ = calculate_similarity(data_, dim_=dimension)
     data_ = concat([data_.drop(columns=['0', '14']), get_dummies(data_[['0', '14']])], axis=1)
-    data_ = remove_cols(data_)
-    data_ = oversample_data(data_, label_col='label')
+    if 'train' in filename:
+        data_ = oversample_data(data_, label_col=label_col)
+    data_, num_comps = apply_pca(data_, percent_variance_to_capture=percent_variance_to_capture, num_comps=num_comps,
+                                 label_col=label_col)
+    if 'train' in filename:
+        return data_, columns_, num_comps
+    else:
+        return data_
 
-    return data_
+
+def obtain_train_test(train_filename=None, test_filename=None, dimension=None, percent_variance_to_capture=None,
+                      label_col=None):
+    data_train, columns_, components_ = data_preprocessing(filename=train_filename, dimension=dimension,
+                                                           percent_variance_to_capture=percent_variance_to_capture,
+                                                           label_col=label_col)
+    data_test = data_preprocessing(filename=test_filename, dimension=dimension, columns_=columns_, num_comps=components_,
+                                   label_col=label_col)
+    cols_in_common = take_common_cols(data_train, data_test)
+    data_train, data_test = data_train[cols_in_common], data_test[cols_in_common]
+
+    return data_train, data_test
+
+
+def apply_model(train_data, model_name=None, label_col=None):
+    columns_ = [col_ for col_ in train_data.columns.difference({label_col})]
+    param_learned = grid_search(train_data[columns_], train_data[label_col])
+    dump_best_model(train_data[columns_], train_data[label_col], param_learned, model_name=model_name)
+
+    return columns_
+
+
+def prediction(test_data, model_name=None, columns_=None, label_col=None):
+    model = load_from_pickle(model_name)
+    return concat([test_data, DataFrame(model.predict(test_data[columns_]), columns=[label_col+'_predicted'])], axis=1)
+
+
+def phrase_relation_main(train_filename=None, test_filename=None, embedding_dimension=None, model_name=None,
+                         percent_variance_to_capture=None, class_column=None):
+    data_train, data_test = obtain_train_test(train_filename=train_filename, test_filename=test_filename,
+                                              dimension=embedding_dimension, label_col=class_column,
+                                              percent_variance_to_capture=percent_variance_to_capture)
+    columns_ = apply_model(data_train, model_name=model_name, label_col=class_column)
+    test_predicted = prediction(data_test, model_name=model_name, columns_=columns_, label_col=class_column)
+    return obtain_scores(actual_=test_predicted[class_column], predicted_=test_predicted[class_column+'_predicted'])
+
+
+
