@@ -29,3 +29,9 @@ Determine the Relationship between two partial phrases
    * $ **git pull origin master (Optional)**
    * $ **chmod +x run_script.sh**
    * $ **./run_script.sh**
+   
+ * Output with respect to testing data obtained as : 
+   **{'f1_score': 0.4579201504316015, 
+   'recall': 0.465638851868248, 
+   'precision': 0.45808186045501903, 
+   'accuracy': 0.55}**
