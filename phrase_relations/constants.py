@@ -5,4 +5,6 @@ param_dict = {'n_estimators': [10, 20, 30],
               'max_features': ['auto', 'sqrt', 'log2'],
               'min_samples_split': [2, 4, 6],
               'min_samples_leaf': [1, 2],
-              'bootstrap': [True, False]}
+              'bootstrap': [True],
+              'oob_score': [True, False],
+              'warm_start': [True, False]}

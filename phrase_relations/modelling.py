@@ -37,13 +37,6 @@ def oversample_data(data_, label_col=None):
     return sampled_data
 
 
-def resample_data(data_, label_col, label_):
-    cols_ = list(set(data_.columns).difference({label_col}))
-    neighbors_ = NearestNeighbors(n_neighbors=len(data_[data_[label_col] == label_]), algorithm='ball_tree').\
-        fit(data_[data_[label_col] == label_][cols_].values.T)
-    return neighbors_
-
-
 def apply_pca(data_, percent_variance_to_capture=None, num_comps=None, label_col=None):
     '''
     :param data_: data-frame
